@@ -1,0 +1,5 @@
+chain,gamma,psnr_req_db,near_optimal_min,near_optimal_max,near_optimal_count,gamma_rain,gamma_sun_other_target,gamma_rain_other_target
+clip,1.7,21.2980,1.6,1.8,3,1.7,1.5,1.5
+filter_clip,1.7,21.3141,1.7,1.8,2,1.7,1.5,1.5
+clip_filter,1.8,23.0258,1.7,1.9,3,1.8,1.6,1.6
+rcf,1.9,22.5432,1.9,2.0,2,1.9,1.8,1.8

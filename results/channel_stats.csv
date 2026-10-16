@@ -1,0 +1,3 @@
+record,n_samples,sampling_time_s,duration_min,power_min_dbm,power_max_dbm,power_mean_dbm,gain_min_db,gain_max_db,scintillation_index
+sun,1800,4,119.9333333,6.14,8.74,8.260324488,-2.120324488,0.4796755121,0.002286285757
+rain,2700,4,179.9333333,4.43,8.59,7.521596252,-3.091596252,1.068403748,0.02679076882

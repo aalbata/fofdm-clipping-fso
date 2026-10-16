@@ -1,0 +1,7 @@
+ber_target,channel,snr_req_db
+0.01,awgn,12.6531
+0.01,sun,12.6692
+0.01,rain,12.8575
+0.001,awgn,15.2936
+0.001,sun,15.3229
+0.001,rain,15.6723
