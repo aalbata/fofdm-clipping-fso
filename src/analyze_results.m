@@ -1,108 +1,88 @@
 function analyze_results(dataDir, resultsDir)
-%ANALYZE_RESULTS Required SNR and peak SNR, selected clipping ratios, and reference tables.
-%   Reads ber.csv and calibration.csv from resultsDir and the power records from dataDir.
+%ANALYZE_RESULTS Required SNR, selected clipping ratios, and reference tables.
+%   Reads ber.csv and waveform_stats.csv from resultsDir and the power records from dataDir.
 %   Writes to resultsDir:
 %   required_snr.csv        required SNR (average-power model) and required peak SNR
-%                           (peak-limited model) of every record, chain, clipping ratio, and
-%                           BER target, with the range over the runs and the required SNR
-%                           from the whole-decibel grid and from linear interpolation
-%   selected_gamma.csv      for every chain, the clipping ratio with the lowest required peak
-%                           SNR at p.selectionTarget for the sunny record, the range of
-%                           clipping ratios within p.nearOptimalDb of that minimum, and the
-%                           minimizing clipping ratios for the other record and target
-%   clipping_reference.csv  Gaussian clipping reference and the measured values of the clip chain
-%   validation.csv          simulated BER of OFDM without a limiter and the closed form
-%   closed_form_reference.csv  required SNR of the closed form with unit gain and averaged
-%                           over the gains of each record
+%                           (peak-limited model) of every configuration
+%   selected_gamma.csv      clipping ratio with the lowest required peak SNR
+%   clipping_reference.csv  Gaussian clipping reference and simulated in-band SDR
+%   validation.csv          simulated BER of OFDM without limiter and the closed form
+%   closed_form_reference.csv  required SNR of the closed form without gain fluctuations
+%                           and averaged over the gains of each record
 %   filter_response.csv     magnitude response of the subband filter
-%   Under the peak-limited model the transmitted waveform is scaled so that its peak power,
-%   the instantaneous power exceeded by a fraction p.peakProb of the samples of the
-%   reconstructed waveform, equals the peak power limit. Because the noise is additive and
-%   independent of the signal, the BER at a peak SNR equals the BER of the average-power
-%   model at an SNR lower by the peak-to-average power ratio (PAPR) in calibration.csv; the
-%   required peak SNR is the required SNR plus that ratio in decibels.
+%   Under the peak-limited model the transmit scale is one over the clipping threshold
+%   instead of one over the RMS amplitude of the limiter output, so the BER at a peak SNR
+%   equals the simulated BER at an SNR lower by the peak-to-average power ratio of the
+%   limiter output. The required peak SNR is the required SNR plus that ratio in decibels.
 p = sim_params();
 S = read_ber(resultsDir);
-R = required_table(p, S);
-[~, ~, cal] = read_calibration(p, resultsDir);
+[req, reqSeed, paprDb] = required_table(p, S);
+ref = clipping_reference(p.gammaGrid);
 nR = numel(p.records);
-nC = numel(p.chains);
 nG = numel(p.gammaGrid);
 nT = numel(p.berTargets);
 finite = ~isinf(p.gammaGrid);
-paprDb = chain_papr(p, cal);
-
-% Chains that coincide without a limiter must give identical bit errors.
-iInf = find(~finite);
-same = {'clip', 'rcf'; 'filter_clip', 'clip_filter'};
-for i = 1:2
-    a = strcmp(p.chains, same{i, 1});
-    b = strcmp(p.chains, same{i, 2});
-    if ~isequal(S.errors(:, a, iInf, :, :), S.errors(:, b, iInf, :, :))
-        error('analyze_results:inf', 'Chains %s and %s differ without a limiter.', same{i, :});
-    end
-end
 
 fid = fopen(fullfile(resultsDir, 'required_snr.csv'), 'w');
-fprintf(fid, ['record,chain,gamma,ber_target,snr_req_db,snr_req_run_min_db,snr_req_run_max_db,' ...
-    'snr_req_1db_grid_db,snr_req_linear_db,papr_db,psnr_req_db\n']);
+fprintf(fid, 'record,filter,gamma,ber_target,snr_req_db,snr_req_seed_min_db,snr_req_seed_max_db,papr_db,psnr_req_db\n');
 for r = 1:nR
-    for ic = 1:nC
+    for iFilt = 1:2
         for ig = 1:nG
             for it = 1:nT
-                q = R.req(r, ic, ig, it);
-                fprintf(fid, '%s,%s,%s,%g,%s,%s,%s,%s,%s,%s,%s\n', p.records{r}, p.chains{ic}, ...
-                    gamma_text(p.gammaGrid(ig)), p.berTargets(it), num_text(q, 4), ...
-                    num_text(min(R.reqSeed(r, ic, ig, it, :), [], 'includenan'), 4), ...
-                    num_text(max(R.reqSeed(r, ic, ig, it, :), [], 'includenan'), 4), ...
-                    num_text(R.req1dB(r, ic, ig, it), 4), num_text(R.reqLin(r, ic, ig, it), 4), ...
-                    num_text(paprDb(ic, ig), 4), num_text(q + paprDb(ic, ig), 4));
+                if finite(ig)
+                    papr = paprDb(ig);
+                else
+                    papr = NaN;                    % the peak-limited model requires a limiter
+                end
+                fprintf(fid, '%s,%d,%s,%g,%s,%s,%s,%s,%s\n', p.records{r}, iFilt - 1, ...
+                    gamma_text(p.gammaGrid(ig)), p.berTargets(it), num_text(req(r, iFilt, ig, it), 4), ...
+                    num_text(min(reqSeed(r, iFilt, ig, it, :), [], 'includenan'), 4), ...
+                    num_text(max(reqSeed(r, iFilt, ig, it, :), [], 'includenan'), 4), ...
+                    num_text(papr, 4), num_text(req(r, iFilt, ig, it) + papr, 4));
             end
         end
     end
 end
 fclose(fid);
 
-% Clipping ratio that minimizes the required peak SNR; of equal minima the larger clipping
-% ratio is taken. Operation without a limiter is not a candidate.
-isSel = find(p.berTargets == p.selectionTarget);
-if numel(isSel) ~= 1
+% Clipping ratio that minimizes the required peak SNR at the selection target; of equal
+% minima the larger clipping ratio is taken.
+isSelection = p.berTargets == p.selectionTarget;
+if nnz(isSelection) ~= 1
     error('analyze_results:selectionTarget', 'The selection target must be one of the BER targets.');
 end
-iSun = find(strcmp(p.records, 'sun'));
-iRain = find(strcmp(p.records, 'rain'));
-other = find(p.berTargets ~= p.selectionTarget, 1);
 fid = fopen(fullfile(resultsDir, 'selected_gamma.csv'), 'w');
-fprintf(fid, ['chain,gamma,psnr_req_db,near_optimal_min,near_optimal_max,near_optimal_count,' ...
-    'gamma_rain,gamma_sun_other_target,gamma_rain_other_target\n']);
-for ic = 1:nC
-    [ig, best, near] = best_gamma(p, R.req(iSun, ic, :, isSel), paprDb(ic, :));
-    gNear = p.gammaGrid(near);
-    fprintf(fid, '%s,%s,%s,%s,%s,%d,%s,%s,%s\n', p.chains{ic}, gamma_text(p.gammaGrid(ig)), num_text(best, 4), ...
-        gamma_text(min(gNear)), gamma_text(max(gNear)), numel(gNear), ...
-        gamma_text(p.gammaGrid(best_gamma(p, R.req(iRain, ic, :, isSel), paprDb(ic, :)))), ...
-        gamma_text(p.gammaGrid(best_gamma(p, R.req(iSun, ic, :, other), paprDb(ic, :)))), ...
-        gamma_text(p.gammaGrid(best_gamma(p, R.req(iRain, ic, :, other), paprDb(ic, :)))));
+fprintf(fid, 'record,filter,gamma,psnr_req_db\n');
+for r = 1:nR
+    for iFilt = 1:2
+        psnr = reshape(req(r, iFilt, :, isSelection), 1, nG) + paprDb;
+        psnr(~finite) = NaN;
+        best = min(psnr);
+        ig = find(psnr == best, 1, 'last');
+        fprintf(fid, '%s,%d,%s,%s\n', p.records{r}, iFilt - 1, gamma_text(p.gammaGrid(ig)), num_text(best, 4));
+    end
 end
 fclose(fid);
 
-% Gaussian clipping reference of the limiter samples and the measured values of the clip
-% chain (attenuation factor, in-band SDR, and PAPR of the reconstructed waveform).
-ref = clipping_reference(p.gammaGrid);
-iClip = find(strcmp(p.chains, 'clip'));
+% Gaussian clipping reference and the simulated in-band signal-to-distortion ratio, pooled
+% over records and seeds.
+W = readtable(fullfile(resultsDir, 'waveform_stats.csv'), 'TextType', 'string');
 fid = fopen(fullfile(resultsDir, 'clipping_reference.csv'), 'w');
-fprintf(fid, ['gamma,alpha,output_power,distortion,sdr_db,papr_db,clip_probability,' ...
-    'alpha_clip,inband_sdr_clip_db,papr_1e4_clip_db\n']);
+fprintf(fid, 'gamma,alpha,output_power,distortion,sdr_db,papr_db,clip_probability,sdr_inband_ofdm_db,sdr_inband_fofdm_db\n');
 for ig = find(finite)
     gamma = p.gammaGrid(ig);
-    row = cal.chain == "clip" & round(10 * cal.gamma) == round(10 * gamma);
-    fprintf(fid, '%.1f,%.6f,%.6f,%.6e,%.4f,%.4f,%.6e,%.6f,%.4f,%.4f\n', gamma, ref.alpha(ig), ref.power(ig), ...
-        ref.distortion(ig), 10 * log10(ref.sdr(ig)), 10 * log10(ref.papr(ig)), exp(-gamma^2), ...
-        cal.alpha(row), cal.inband_sdr_db(row), paprDb(iClip, ig));
+    rows = round(10 * W.gamma) == round(10 * gamma);
+    sdrIn = zeros(1, 2);
+    for iFilt = 1:2
+        sel = rows & W.filter == iFilt - 1;
+        sdrIn(iFilt) = 10 * log10(sum(W.e_x(sel)) / sum(W.e_err(sel)));
+    end
+    fprintf(fid, '%.1f,%.6f,%.6f,%.6e,%.4f,%.4f,%.6e,%.4f,%.4f\n', gamma, ref.alpha(ig), ref.power(ig), ...
+        ref.distortion(ig), 10 * log10(ref.sdr(ig)), paprDb(ig), exp(-gamma^2), sdrIn(1), sdrIn(2));
 end
 fclose(fid);
 
-% Simulated BER of unfiltered OFDM without a limiter against the closed form for 16-QAM,
+% Simulated BER of unfiltered OFDM without limiter against the closed form for 16-QAM,
 % averaged over the gains of the record.
 fid = fopen(fullfile(resultsDir, 'validation.csv'), 'w');
 fprintf(fid, 'record,snr_db,bit_errors,bits,ber_sim,ber_theory\n');
@@ -110,15 +90,15 @@ for r = 1:nR
     rec = load_power_record(dataDir, p.records{r});
     for iSnr = 1:numel(p.snrGrid)
         rho = rec.g * (p.N / p.Nd) * 10^(p.snrGrid(iSnr) / 10);
-        e = sum(S.errors(r, iClip, iInf, iSnr, :), 'all');
-        b = sum(S.bits(r, iClip, iInf, iSnr, :), 'all');
-        fprintf(fid, '%s,%.2f,%d,%d,%.6e,%.6e\n', p.records{r}, p.snrGrid(iSnr), e, b, e / b, mean(qam16_ber(rho)));
+        e = sum(S.errors(r, 1, ~finite, iSnr, :), 'all');
+        b = sum(S.bits(r, 1, ~finite, iSnr, :), 'all');
+        fprintf(fid, '%s,%d,%d,%d,%.6e,%.6e\n', p.records{r}, p.snrGrid(iSnr), e, b, e / b, mean(qam16_ber(rho)));
     end
 end
 fclose(fid);
 
-% SNR at which the closed form equals each BER target, with unit gain and averaged over the
-% gains of each record.
+% SNR at which the closed form equals each BER target, without gain fluctuations (unit
+% gain) and averaged over the gains of each record.
 channels = [{'awgn'}, p.records];
 gains = cell(1, nR + 1);
 gains{1} = 1;
@@ -144,13 +124,4 @@ for k = 0:1600
     fprintf(fid, '%d,%s\n', k, num_text(20 * log10(abs(Hf(k + 1))), 4));
 end
 fclose(fid);
-end
-
-function [ig, best, near] = best_gamma(p, req, papr)
-%BEST_GAMMA Clipping ratio with the lowest required peak SNR and the near-optimal ratios.
-psnr = reshape(req, 1, []) + reshape(papr, 1, []);
-psnr(isinf(p.gammaGrid)) = NaN;
-best = min(psnr);
-ig = find(psnr == best, 1, 'last');
-near = find(psnr <= best + p.nearOptimalDb);
 end

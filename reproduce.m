@@ -1,8 +1,7 @@
 function reproduce(mode)
 %REPRODUCE Regenerate the tables and figures of the paper.
 %   reproduce           tables and figures from the shipped simulation results
-%   reproduce('full')   rerun the characterization and the simulation from the power records
-%                       in data/ first
+%   reproduce('full')   rerun the simulation from the power records in data/ first
 %   reproduce('raw')    download the dataset from Zenodo and rebuild data/ first, then as 'full'
 if nargin < 1
     mode = 'fast';
@@ -26,21 +25,17 @@ switch mode
 end
 
 if simulate
-    characterize_transmitters(resultsDir);
     run_simulation(dataDir, resultsDir);
 end
 analyze_results(dataDir, resultsDir);
 if simulate
     transmit_spectrum(resultsDir);
-    implementation_checks(dataDir, resultsDir);
 end
 write_summary(resultsDir);
 
 plot_block_diagram(figuresDir);
 plot_clipping_ratio_sweep(resultsDir, figuresDir);
 plot_ber_vs_snr(resultsDir, figuresDir);
-plot_peak_ccdf(resultsDir, figuresDir);
 plot_transmit_psd(resultsDir, figuresDir);
-plot_tradeoff(resultsDir, figuresDir);
 fprintf('Tables are in %s\nFigures are in %s\n', resultsDir, figuresDir);
 end

@@ -7,8 +7,8 @@ function fr = prepare_frame(p, ctx, s0, ab, w0, filt)
 %   each sample of u), D and Dc (delays of the transmit filter and of the filter cascade),
 %   eqz (known response on the data subcarriers of the counted blocks, without the
 %   transmit scale and the limiter attenuation), Zn (noise at the FFT output divided by
-%   eqz), filt (true when the subband filter is used). The transmit filter delay D is
-%   L/2 samples, half a sample more than the group delay of the filter.
+%   eqz), sigma (RMS amplitude of u), powerRange (samples of the counted blocks in uo),
+%   filt (true when the subband filter is used).
 if filt
     fr.u = filter_stream(s0, ctx.h);
     fr.D = p.L / 2;
@@ -23,6 +23,7 @@ else
     zn = w0(1:numel(s0));
 end
 fr.filt = filt;
+fr.sigma = sqrt(ctx.sigma2(filt + 1));
 T = numel(fr.u);
 fr.uo = resample_stream([fr.u; zeros(p.nPad - T, 1)], p.os * p.nPad);
 n = (0:T - 1).';
@@ -30,4 +31,5 @@ blockOf = min(max(floor((n - fr.D) / p.Nb), 0), p.B - 1) + 1;
 fr.an = ab(blockOf);
 fr.eqz = (Gk .* ctx.phase) .* ab(2:p.M + 1).';
 fr.Zn = receive_frame(p, zn, fr.Dc) ./ fr.eqz;
+fr.powerRange = p.os * (fr.D + p.Nb) + (1:p.os * p.M * p.Nb).';
 end

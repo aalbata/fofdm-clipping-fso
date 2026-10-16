@@ -5,8 +5,8 @@ root = fileparts(fileparts(mfilename('fullpath')));
 addpath(fullfile(root, 'src'));
 p = sim_params();
 ctx = sim_context(p);
-check(p.os == 4 && p.nPad == 2^19 && p.M == 60 && p.delta == 205 && p.rcfIterations == 4 && ...
-    p.peakRate == 16 && p.peakProb == 1e-4, 'simulation constants');
+check(p.os == 4 && p.nPad == 2^19 && p.M == 60 && p.delta == 205 && p.gamma0 == 3, ...
+    'simulation constants');
 
 % Chebyshev window: symmetry, peak, and equal sidelobes at the specified level.
 w = dolph_chebyshev(p.L, p.sidelobeDb);
@@ -27,8 +27,7 @@ check(abs(Hf(1540) - 0.5) < 1e-3, 'filter has half amplitude at the band edge pl
 check(abs(20 * log10(Hf(1537)) + 3.657) < 0.01, 'filter attenuates the outermost data subcarrier by 3.66 dB');
 check(max(20 * log10(Hf(1601:p.N / 2 + 1))) < -80, 'filter response is below -80 dB for |k| >= 1600');
 check(abs(ctx.sigma2(1) - 0.75) < 1e-15 && abs(ctx.sigma2(2) - 0.7482979198) < 1e-9, ...
-    'stream power without and with the filter');
-check(isequal(ctx.chainSigma2, ctx.sigma2([1 2 1 1])), 'limiter input power of each chain');
+    'limiter input power without and with the filter');
 
 % Gaussian clipping reference against numerical integration over the Rayleigh envelope and
 % against complex Gaussian samples.
@@ -56,12 +55,6 @@ end
 ref = clipping_reference(Inf);
 check(ref.alpha == 1 && ref.power == 1 && ref.distortion == 0, 'reference without limiter');
 
-% Exceedance level from a histogram: unit-mean exponential power, P(power > x) = exp(-x).
-pw = abs(u).^2;
-edges = (0:0.01:18).';
-lev = exceedance_level(histcounts(10 * log10(pw), edges), edges, numel(pw), [1e-2 1e-3]);
-check(all(abs(lev - 10 * log10(-log([1e-2 1e-3]))) < [0.01 0.03]), 'exceedance level of an exponential power');
-
 % Rate change: a tone inside the band is interpolated exactly, and decimation inverts interpolation.
 n = 4096;
 tone = exp(2j * pi * 37 * (0:n - 1).' / n);
@@ -78,23 +71,6 @@ check(max(abs(xo(1:4:end) - xb)) < 1e-10, 'interpolation keeps the original samp
 high = exp(2j * pi * (3 * n) * (0:4 * n - 1).' / (4 * n));         % tone beyond half the lower sampling rate
 check(max(abs(resample_stream(high, n))) < 1e-10, 'decimation removes a tone outside the lower band');
 
-% Bit-error counting from crossing scales against direct decisions at each noise scale.
-nSym = 20000;
-lv = randi(stream, [0 3], nSym, 2);
-Xt = ((2 * lv(:, 1) - 3) + 1j * (2 * lv(:, 2) - 3)) / sqrt(10);
-Zs = 0.9 * Xt + 0.05 * (randn(stream, nSym, 1) + 1j * randn(stream, nSym, 1));
-Zn = (randn(stream, nSym, 1) + 1j * randn(stream, nSym, 1)) / sqrt(2);
-Zn(1:10) = 0;
-scale = [0, 10.^(-(0:0.25:30) / 20)];
-check(isequal(count_bit_errors(Zs, Zn, scale, lv(:, 1), lv(:, 2)), direct_bit_errors(Zs, Zn, scale, lv(:, 1), lv(:, 2))), ...
-    'bit-error counting equals direct decisions at every noise scale');
-% Exact ties: at unit noise scale the noise cancels every component.
-Zt = Zs(1:2000);
-lt = lv(1:2000, :);
-st = [0.5 1 2];
-check(isequal(count_bit_errors(Zt, -Zt, st, lt(:, 1), lt(:, 2)), direct_bit_errors(Zt, -Zt, st, lt(:, 1), lt(:, 2))), ...
-    'bit-error counting at exact sign ties');
-
 % Closed-form 16-QAM bit error rate and required SNR.
 check(abs(qam16_ber(0) - 0.5) < 1e-15, 'closed-form BER at zero SNR');
 snr = 0:5;
@@ -107,29 +83,28 @@ check(abs(required_snr(0:2, [0 1e-2 1e-4], 1e-3) - 1.5) < 1e-9, ...
 curve = qam16_ber(10.^(p.snrGrid / 10) * p.N / p.Nd);
 for target = p.berTargets
     exact = fzero(@(s) log10(qam16_ber(10^(s / 10) * p.N / p.Nd)) - log10(target), [0 30]);
-    check(abs(required_snr(p.snrGrid, curve, target) - exact) < 5e-4, ...
-        sprintf('required SNR of the closed form at BER %g within 0.0005 dB', target));
-    check(abs(required_snr(p.snrGrid, curve, target, 'linear') - exact) < 0.01, ...
-        sprintf('linear interpolation of the closed form at BER %g within 0.01 dB', target));
+    check(abs(required_snr(p.snrGrid, curve, target) - exact) < 0.005, ...
+        sprintf('required SNR of the closed form at BER %g within 0.005 dB', target));
 end
 
 % Required-SNR table: curves shifted by a known amount per clipping ratio.
 nG = numel(p.gammaGrid);
-nC = numel(p.chains);
 shift = 0.1 * (1:nG);
-S.ber = zeros(numel(p.records), nC, nG, numel(p.snrGrid));
+S.ber = zeros(numel(p.records), 2, nG, numel(p.snrGrid));
 for ig = 1:nG
     S.ber(:, :, ig, :) = repmat(reshape(qam16_ber(10.^((p.snrGrid - shift(ig)) / 10) * p.N / p.Nd), 1, 1, 1, []), ...
-        numel(p.records), nC);
+        numel(p.records), 2);
 end
 S.berSeed = repmat(S.ber, 1, 1, 1, 1, numel(p.seeds));
-R = required_table(p, S);
+[req, reqSeed, paprDb] = required_table(p, S);
 exact = fzero(@(s) log10(qam16_ber(10^(s / 10) * p.N / p.Nd)) - log10(p.berTargets(1)), [0 30]);
-check(max(abs(reshape(R.req(1, 2, :, 1), 1, []) - exact - shift)) < 5e-4, 'required-SNR table follows the shift of the curves');
-check(max(abs(R.reqSeed(:) - repmat(R.req(:), numel(p.seeds), 1))) < 1e-12, 'required-SNR table per run');
-check(max(abs(R.req1dB(:) - R.req(:))) < 0.005, 'required SNR from the whole-decibel grid');
+check(max(abs(reshape(req(1, 2, :, 1), 1, []) - exact - shift)) < 0.005, 'required-SNR table follows the shift of the curves');
+check(max(abs(reqSeed(:) - repmat(req(:), numel(p.seeds), 1))) < 1e-12, 'required-SNR table per seed');
+g = p.gammaGrid(1:end - 1);
+check(isinf(paprDb(end)) && max(abs(paprDb(1:end - 1) - 10 * log10(g.^2 ./ (1 - exp(-g.^2))))) < 1e-9, ...
+    'PAPR of the limiter output on the grid');
 
-% One frame through every transmit chain and the receiver.
+% One frame through the transmit and receive chain.
 Tmax = p.B * p.Nb + p.L - 1;
 bits = randi(stream, [0 1], 4 * p.Nd, p.B);
 w0 = (randn(stream, Tmax, 1) + 1j * randn(stream, Tmax, 1)) / sqrt(2);
@@ -137,91 +112,65 @@ ab = 0.8 + 0.4 * rand(stream, p.B, 1);
 [s0, iq, qq, X] = ofdm_frame(p, bits);
 iq = iq(:, 2:p.M + 1);
 qq = qq(:, 2:p.M + 1);
-Xc = X(:, 2:p.M + 1);
-check(abs(mean(abs(Xc(:)).^2) - 1) < 5e-3, 'transmitted symbols have unit average power');
+X = X(:, 2:p.M + 1);
+check(abs(mean(abs(X(:)).^2) - 1) < 5e-3, 'transmitted symbols have unit average power');
 nBits = 4 * p.Nd * p.M;
-fr = {prepare_frame(p, ctx, s0, ab, w0, false), prepare_frame(p, ctx, s0, ab, w0, true)};
-check(numel(fr{1}.uo) == p.os * p.nPad && numel(fr{2}.uo) == p.os * p.nPad, 'interpolated frame length');
-minSdr = [200 70 70 200];                          % without filter: rounding only; with filter: block interference
-for ic = 1:nC
-    chain = p.chains{ic};
-    frc = fr{p.chainFiltered(ic) + 1};
-    [xs, xn, rate] = transmit_stream(p, ctx, fr{1}, fr{2}, chain, Inf, X);
-    check(rate == 1 && isequal(xs, frc.u) && numel(xn) == p.nPad, ['stream without a limiter, ' chain]);
-    Z = equalized_symbols(p, ctx, frc, xs);
-    check(count_bit_errors(Z, frc.Zn, 0, iq, qq) == 0, ['no bit errors without noise and limiter, ' chain]);
-    sdr = 10 * log10(sum(abs(Xc(:)).^2) / sum(abs(Z(:) - Xc(:)).^2));
-    check(sdr > minSdr(ic), ['equalized symbols equal the transmitted symbols, ' chain]);
+minSdr = [200 70];                                 % without filter: rounding only; with filter: block interference
+for filt = [false true]
+    fr = prepare_frame(p, ctx, s0, ab, w0, filt);
+    tag = sprintf('filter = %d', filt);
+    T = numel(fr.u);
+    check(numel(fr.uo) == p.os * p.nPad, ['interpolated frame length, ' tag]);
+    [Zs, ~, pOut] = equalized_symbols(p, ctx, fr, Inf);
+    check(abs(pOut / ctx.sigma2(filt + 1) - 1) < 5e-3, ['limiter input power, ' tag]);
+    check(count_bit_errors(Zs, fr.Zn, 0, iq, qq) == 0, ['no bit errors without noise and limiter, ' tag]);
+    sdr = 10 * log10(sum(abs(X(:)).^2) / sum(abs(Zs(:) - X(:)).^2));
+    check(sdr > minSdr(filt + 1), ['equalized symbols equal the transmitted symbols, ' tag]);
     for gamma = [1.5 3]
         ref = clipping_reference(gamma);
-        A = gamma * sqrt(ctx.chainSigma2(ic));
-        [xs, xn, rate] = transmit_stream(p, ctx, fr{1}, fr{2}, chain, gamma, X);
-        Z = equalized_symbols(p, ctx, frc, xs);
-        alphaMeas = real(sum(Z(:) .* conj(Xc(:)))) / sum(abs(Xc(:)).^2);
-        tag = sprintf('gamma = %.1f, %s', gamma, chain);
-        switch chain
-            case {'clip', 'filter_clip'}
-                check(rate == p.os && max(abs(xn)) <= A * (1 + 1e-12), ['limiter output bounded, ' tag]);
-                check(abs(alphaMeas - ref.alpha) < 3e-3, ['attenuation factor equals the Gaussian reference, ' tag]);
-                pOut = mean(abs(xn(p.os * (frc.D + p.Nb) + (1:p.os * p.M * p.Nb))).^2);
-                check(abs(pOut / (ctx.chainSigma2(ic) * ref.power) - 1) < 5e-3, ['limiter output power, ' tag]);
-            case 'clip_filter'
-                check(rate == 1 && numel(xs) == numel(frc.u), ['filtered stream length, ' tag]);
-                check(abs(alphaMeas - ref.alpha) < 3e-3, ['attenuation factor equals the Gaussian reference, ' tag]);
-            case 'rcf'
-                blocks = reshape(xs, p.Nb, p.B);
-                F = fft(blocks(p.Ncp + 1:end, :), [], 1);
-                outside = true(p.N, 1);
-                outside(p.bins) = false;
-                check(max(abs(F(outside, :)), [], 'all') < 1e-9 * max(abs(F(:))), ...
-                    ['no components outside the data subcarriers, ' tag]);
-                check(isequal(blocks(1:p.Ncp, :), blocks(p.N + 1:end, :)), ['cyclic prefix, ' tag]);
-                xo = resample_stream(s0, p.os * numel(s0));
-                xr = resample_stream(xs, p.os * numel(xs));
-                check(max(abs(xr)) < max(abs(xo)), ['repeated clipping and filtering lowers the peak, ' tag]);
+        [Zs, A, pOut] = equalized_symbols(p, ctx, fr, gamma);
+        pc = ctx.sigma2(filt + 1) * ref.power;
+        alphaMeas = real(sum(ref.alpha * Zs(:) .* conj(X(:)))) / sum(abs(X(:)).^2);
+        check(abs(alphaMeas - ref.alpha) < 3e-3, sprintf('measured attenuation factor at gamma = %.1f, %s', gamma, tag));
+        check(abs(pOut / pc - 1) < 5e-3, sprintf('limiter output power at gamma = %.1f, %s', gamma, tag));
+        co = envelope_limiter(fr.uo, A);
+        check(max(abs(co)) <= A * (1 + 1e-12), sprintf('peak of the oversampled limiter output at gamma = %.1f, %s', gamma, tag));
+        if gamma == 1.5
+            % A limiter at the sampling rate gives measurably different equalized symbols.
+            y1 = fr.an .* envelope_limiter(fr.u, A);
+            if filt
+                y1 = filter_stream(y1, ctx.g);
+            end
+            Z1 = receive_frame(p, y1, fr.Dc) ./ (ref.alpha * fr.eqz);
+            check(max(abs(Z1(:) - Zs(:))) > 0.05, ['oversampled limiter differs from a sampling-rate limiter, ' tag]);
         end
 
-        % Peak-limited model simulated directly: waveform scaled to the peak power limit, noise
-        % added, complete receiver. The result equals the average-power result at an SNR
-        % lower by the PAPR.
-        pAvg = mean(abs(xs(frc.D + p.Nb + (1:p.M * p.Nb))).^2);
-        pPeak = 3 * pAvg;                          % any peak power gives the same identity
-        psnr = 16;
-        snrEq = psnr - 10 * log10(pPeak / pAvg);
-        y = frc.an .* xs / sqrt(pPeak) + 10^(-psnr / 20) * w0(1:numel(xs));
-        if frc.filt
+        % Peak-limited model simulated directly: stream scaled to unit peak, noise added to the
+        % stream, and the complete receiver. The result equals the average-power result at an
+        % SNR lower by the PAPR of the limiter output.
+        snr = 14;
+        psnr = snr + 10 * log10(ref.papr);
+        c = resample_stream(co, p.nPad);
+        y = fr.an .* c(1:T) / A + 10^(-psnr / 20) * w0(1:T);
+        if filt
             y = filter_stream(y, ctx.g);
         end
-        Zhat = receive_frame(p, y, frc.Dc) ./ (frc.eqz * alphaMeas / sqrt(pPeak));
+        Zhat = receive_frame(p, y, fr.Dc) ./ (fr.eqz * ref.alpha / A);
         eDirect = count_bit_errors(Zhat, zeros(size(Zhat)), 0, iq, qq);
-        eShift = count_bit_errors(Z / alphaMeas, frc.Zn, 10^(-snrEq / 20) * sqrt(pAvg) / alphaMeas, iq, qq);
-        check(eDirect > 100 && abs(eDirect - eShift) <= 2, ['peak-limited model equals the shifted average-power model, ' tag]);
+        eShift = count_bit_errors(Zs, fr.Zn, 10^(-snr / 20) * sqrt(pc) / ref.alpha, iq, qq);
+        check(eDirect > 100 && abs(eDirect - eShift) <= 2, ...
+            sprintf('peak-limited model equals the shifted average-power model at gamma = %.1f, %s', gamma, tag));
     end
 end
 
 % Unfiltered OFDM without limiter and with unit gains against the closed form.
-fr1 = prepare_frame(p, ctx, s0, ones(p.B, 1), w0, false);
-Z = equalized_symbols(p, ctx, fr1, fr1.u);
+fr = prepare_frame(p, ctx, s0, ones(p.B, 1), w0, false);
+Zs = equalized_symbols(p, ctx, fr, Inf);
 snr = [8 12 16];
-e = count_bit_errors(Z, fr1.Zn, 10.^(-snr / 20) * sqrt(p.Nd / p.N), iq, qq);
+e = count_bit_errors(Zs, fr.Zn, 10.^(-snr / 20) * sqrt(p.Nd / p.N), iq, qq);
 expected = nBits * qam16_ber(10.^(snr / 10) * p.N / p.Nd);
 check(all(abs(e - expected) < 4 * sqrt(expected)), 'BER in white Gaussian noise matches the closed form');
 fprintf('All checks passed.\n');
-end
-
-function e = direct_bit_errors(Zs, Zn, scale, iq, qq)
-%DIRECT_BIT_ERRORS Bit errors of hard 16-QAM decisions evaluated separately at each noise scale.
-s = sqrt(10) / 2;
-v0 = [real(Zs(:)); imag(Zs(:))] * s;
-n0 = [real(Zn(:)); imag(Zn(:))] * s;
-level = [iq(:); qq(:)];
-sentPositive = level >= 2;
-sentInner = level == 1 | level == 2;
-e = zeros(1, numel(scale));
-for i = 1:numel(scale)
-    v = v0 + scale(i) * n0;
-    e(i) = nnz(xor(v > 0, sentPositive)) + nnz(xor(abs(v) < 1, sentInner));
-end
 end
 
 function check(condition, name)

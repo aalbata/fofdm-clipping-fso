@@ -1,9 +1,0 @@
-stream,estimator,segment,kaiser_beta,frames,guard_band_db
-ofdm,welch,8192,30,60,-35.6631
-ofdm,welch,32768,30,60,-35.6799
-ofdm,welch,8192,40,60,-35.6761
-ofdm,closed_form,NaN,NaN,NaN,-35.6892
-fofdm,welch,8192,30,60,-132.5096
-fofdm,welch,32768,30,60,-132.5735
-fofdm,welch,8192,40,60,-132.5062
-fofdm,closed_form,NaN,NaN,NaN,-132.5965

@@ -1,0 +1,11 @@
+configuration,filter,gamma,limiter_rate,stream_rate,guard_band_db,outside_band_db,peak_excess_median_db,peak_excess_max_db
+ofdm,0,Inf,NaN,1,-35.56,NaN,NaN,NaN
+fofdm,1,Inf,NaN,1,-132.42,NaN,NaN,NaN
+ofdm_gamma0,0,3.0,4,4,-35.53,-56.13,0.05,0.25
+fofdm_gamma0,1,3.0,4,4,-56.56,-56.20,0.05,0.25
+clipped_ofdm,0,1.7,4,4,-25.62,-28.29,0.34,0.59
+joint,1,1.7,4,4,-26.10,-28.31,0.34,0.60
+clipped_ofdm_rate1,0,1.7,1,1,-23.35,NaN,2.76,3.69
+joint_rate1,1,1.7,1,1,-23.61,NaN,2.75,3.67
+clipped_ofdm_lowpass,0,1.7,4,1,-25.62,NaN,1.55,2.04
+joint_lowpass,1,1.7,4,1,-26.10,NaN,1.55,2.04

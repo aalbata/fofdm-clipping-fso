@@ -1,34 +1,27 @@
-function R = required_table(p, S)
-%REQUIRED_TABLE Required SNR of every record, chain, clipping ratio, and BER target.
-%   S is the structure returned by READ_BER (fields ber and berSeed are used). Fields of R,
-%   indexed by record, chain, clipping ratio, and BER target (NaN when the target is not
-%   reached):
-%   req      SNR in dB at which the pooled BER crosses the target (parabola in log BER)
-%   reqSeed  the same for the BER of each run (run as fifth index)
-%   req1dB   the same as req from the grid points at whole decibels only
-%   reqLin   the same as req with the straight line through log BER (REQUIRED_SNR)
+function [req, reqSeed, paprDb] = required_table(p, S)
+%REQUIRED_TABLE Required SNR of every configuration and the PAPR of its limiter output.
+%   S is the structure returned by READ_BER. req is indexed by record, filter (1 = off,
+%   2 = on), clipping ratio, and BER target and holds the SNR in dB at which the pooled BER
+%   crosses the target (NaN when it does not). reqSeed has the seed as fifth index and holds
+%   the same quantity for the BER of each seed. paprDb is the peak-to-average power ratio
+%   of the limiter output in dB for each clipping ratio (Inf without limiter). Under the
+%   peak-limited model the required peak SNR in dB is req + paprDb.
+ref = clipping_reference(p.gammaGrid);
+paprDb = 10 * log10(ref.papr);
 nR = numel(p.records);
-nC = numel(p.chains);
 nG = numel(p.gammaGrid);
 nT = numel(p.berTargets);
-nSeed = size(S.berSeed, 5);
-whole = abs(p.snrGrid - round(p.snrGrid)) < 1e-9;
-R.req = NaN(nR, nC, nG, nT);
-R.req1dB = NaN(nR, nC, nG, nT);
-R.reqLin = NaN(nR, nC, nG, nT);
-R.reqSeed = NaN(nR, nC, nG, nT, nSeed);
+nSeed = numel(p.seeds);
+req = NaN(nR, 2, nG, nT);
+reqSeed = NaN(nR, 2, nG, nT, nSeed);
 for r = 1:nR
-    for ic = 1:nC
+    for iFilt = 1:2
         for ig = 1:nG
-            ber = reshape(S.ber(r, ic, ig, :), 1, []);
             for it = 1:nT
-                target = p.berTargets(it);
-                R.req(r, ic, ig, it) = required_snr(p.snrGrid, ber, target);
-                R.req1dB(r, ic, ig, it) = required_snr(p.snrGrid(whole), ber(whole), target);
-                R.reqLin(r, ic, ig, it) = required_snr(p.snrGrid, ber, target, 'linear');
+                req(r, iFilt, ig, it) = required_snr(p.snrGrid, squeeze(S.ber(r, iFilt, ig, :)), p.berTargets(it));
                 for is = 1:nSeed
-                    R.reqSeed(r, ic, ig, it, is) = required_snr(p.snrGrid, ...
-                        reshape(S.berSeed(r, ic, ig, :, is), 1, []), target);
+                    reqSeed(r, iFilt, ig, it, is) = required_snr(p.snrGrid, ...
+                        squeeze(S.berSeed(r, iFilt, ig, :, is)), p.berTargets(it));
                 end
             end
         end
